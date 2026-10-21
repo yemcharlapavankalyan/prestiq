@@ -11,7 +11,7 @@
 
 All external client traffic routes through **`api-gateway`** (port 8080), which validates JWT tokens and dispatches requests to the appropriate downstream microservice:
 
-```
+```text
 [ Client Request ] ──► [ api-gateway :8080 ]
                                │
        ┌───────────────────────┼───────────────────────┐
@@ -20,12 +20,16 @@ All external client traffic routes through **`api-gateway`** (port 8080), which 
 [ auth-service :8081 ] [ student-service :8082][ scholarship-service :8083 ]
        │                       │                       │
        ▼                       ▼                       ▼
-/api/v1/eligibility/** /api/v1/recommend/**   /api/v1/applications/**
+/api/v1/eligibility/** /api/v1/recommendations/** /api/v1/applications/**
 [ eligibility-svc :8084][ recommend-svc :8085 ][ application-svc :8086 ]
-       │                       │
-       ▼                       ▼
-/api/v1/assistant/**   /api/v1/notifications/**
-[ ai-service :8000 ]   [ notification-svc :8087]
+       │                       │                       │
+       ▼                       ▼                       ▼
+/api/v1/assistant/**   /api/v1/notifications/** /api/v1/ingestion/**
+[ ai-service :8000 ]   [ notification-svc :8087][ ingestion-service :8001 ]
+                               │
+                               ▼
+                    /api/v1/saved-scholarships/**
+                    [ application-svc :8086 ]
 ```
 
 ---

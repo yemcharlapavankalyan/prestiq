@@ -1,0 +1,128 @@
+server:
+  port: ${PORT:8080}
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 5s
+        pool:
+          type: elastic
+          max-idle-time: 15s
+
+      discovery:
+        locator:
+          enabled: false # Explicit documented route contracts instead of indiscriminate routing
+
+      routes:
+        # 1. Auth Service Routes
+        - id: auth-service
+          uri: ${AUTH_SERVICE_URL:lb://auth-service}
+          predicates:
+            - Path=/api/v1/auth/**, /api/auth/**
+
+        # 2. Student Service Routes
+        - id: student-service
+          uri: ${STUDENT_SERVICE_URL:lb://student-service}
+          predicates:
+            - Path=/api/v1/students/**, /api/students/**
+
+        # 3. Scholarship Service Public Catalog Routes
+        - id: scholarship-service-public
+          uri: ${SCHOLARSHIP_SERVICE_URL:lb://scholarship-service}
+          predicates:
+            - Path=/api/v1/scholarships/**
+
+        # 4. Scholarship Service Admin Management Routes
+        - id: scholarship-service-admin
+          uri: ${SCHOLARSHIP_SERVICE_URL:lb://scholarship-service}
+          predicates:
+            - Path=/api/v1/admin/scholarships/**
+
+        # 5. Eligibility Service Student Evaluation Routes
+        - id: eligibility-service
+          uri: ${ELIGIBILITY_SERVICE_URL:lb://eligibility-service}
+          predicates:
+            - Path=/api/v1/eligibility/**
+
+        # 6. Eligibility Service Admin Rule Set Routes
+        - id: eligibility-service-admin
+          uri: ${ELIGIBILITY_SERVICE_URL:lb://eligibility-service}
+          predicates:
+            - Path=/api/v1/admin/eligibility/**
+
+        # 7. Recommendation Service Routes
+        - id: recommendation-service
+          uri: ${RECOMMENDATION_SERVICE_URL:lb://recommendation-service}
+          predicates:
+            - Path=/api/v1/recommendations/**
+
+        # 8. Application Service Application Tracking Routes
+        - id: application-service
+          uri: ${APPLICATION_SERVICE_URL:lb://application-service}
+          predicates:
+            - Path=/api/v1/applications/**
+
+        # 9. Application Service Saved Scholarships Routes
+        - id: saved-scholarships-service
+          uri: ${APPLICATION_SERVICE_URL:lb://application-service}
+          predicates:
+            - Path=/api/v1/saved-scholarships/**
+
+        # 10. Notification Service Routes
+        - id: notification-service
+          uri: ${NOTIFICATION_SERVICE_URL:lb://notification-service}
+          predicates:
+            - Path=/api/v1/notifications/**
+
+        # 11. AI Service Assistant Chat Routes (Extended 15s timeout for synthesis)
+        - id: ai-service
+          uri: ${AI_SERVICE_URL:http://localhost:8000}
+          predicates:
+            - Path=/api/v1/assistant/**
+          metadata:
+            response-timeout: 15000
+            connect-timeout: 5000
+
+        # 12. Scholarship Ingestion Service Routes
+        - id: ingestion-service
+          uri: ${INGESTION_SERVICE_URL:http://localhost:8001}
+          predicates:
+            - Path=/api/v1/ingestion/**
+
+eureka:
+  client:
+    enabled: ${EUREKA_CLIENT_ENABLED:true}
+    register-with-eureka: ${EUREKA_REGISTER:true}
+    fetch-registry: ${EUREKA_FETCH:true}
+    service-url:
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port}
+
+prestiq:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:d8f99e8cfb24d648849df63ba900221a8b3c9d0e1f2a3b4c5d6e7f8a9b0c1d2}
+      issuer: prestiq-auth
+      expiration-seconds: ${JWT_EXPIRATION_SECONDS:900}
+    internal-service-key: ${INTERNAL_SERVICE_KEY:prestiq-internal-dev-secret-key-2026}
+  gateway:
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,gateway
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true

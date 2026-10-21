@@ -109,9 +109,17 @@ The provided script checks your macOS Homebrew PostgreSQL installation and idemp
 ./scripts/setup-local-databases.sh
 ```
 
-### Step 3: Run an Individual Microservice
+### Step 3: Run Microservices Incrementally
 ```bash
-# Example: Running the Auth Service (Port 8081)
+# Step 3a: Start Discovery Server (Port 8761)
+cd services/discovery-server
+./mvnw spring-boot:run
+
+# Step 3b: Start API Gateway (Port 8080)
+cd services/api-gateway
+./mvnw spring-boot:run
+
+# Step 3c: Run the Target Domain Service (e.g. Auth Service Port 8081)
 cd services/auth-service
 ./mvnw spring-boot:run
 
