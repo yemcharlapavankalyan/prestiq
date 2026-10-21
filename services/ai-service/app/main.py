@@ -38,12 +38,13 @@ def create_app() -> FastAPI:
     )
 
     # CORS configuration
+    allowed_origins = [o.strip() for o in settings.cors_allowed_origins.split(",") if o.strip()]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=allowed_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With", "X-Request-Id", "X-Internal-Service-Key"],
     )
 
     # Global RFC 7807 Exception Handlers

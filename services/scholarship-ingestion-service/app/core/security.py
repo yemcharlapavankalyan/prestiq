@@ -25,11 +25,12 @@ class UserPrincipal:
 def decode_jwt_token(token: str) -> dict:
     """Decodes and validates a Bearer JWT token."""
     try:
+        valid_issuers = list({settings.jwt_issuer, "prestiq-auth", "prestiq-auth-service"})
         payload = jwt.decode(
             token,
             settings.jwt_secret,
             algorithms=[settings.jwt_algorithm],
-            issuer=settings.jwt_issuer,
+            issuer=valid_issuers,
             options={"require": ["sub", "exp"]},
         )
         return payload

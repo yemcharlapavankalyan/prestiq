@@ -21,10 +21,11 @@ class Settings(BaseSettings):
     debug: bool = False
 
     # Security
-    jwt_secret: str = "0123456789012345678901234567890123456789012345678901234567890123"
-    jwt_issuer: str = "prestiq-auth-service"
+    jwt_secret: str = "d8f99e8cfb24d648849df63ba900221a8b3c9d0e1f2a3b4c5d6e7f8a9b0c1d2"
+    jwt_issuer: str = "prestiq-auth"
     jwt_algorithm: str = "HS256"
     internal_service_key: str = "prestiq-internal-dev-secret-key-2026"
+    cors_allowed_origins: str = "http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
     # Database: SQLite in-memory/file for lightweight testing or PostgreSQL in production
     database_url: str = "sqlite+aiosqlite:///./prestiq_ingestion.db"
