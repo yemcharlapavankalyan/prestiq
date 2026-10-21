@@ -29,11 +29,14 @@ public class JwtTokenValidator {
 
     public boolean validateToken(String token) {
         try {
-            Jwts.parser()
-                    .verifyWith(key)
-                    .requireIssuer(jwtProperties.getIssuer())
-                    .build()
-                    .parseSignedClaims(token);
+            Claims claims = getClaims(token);
+            String issuer = claims.getIssuer();
+            if (issuer != null && !issuer.equals(jwtProperties.getIssuer())
+                    && !issuer.equals("prestiq-auth")
+                    && !issuer.equals("prestiq-auth-service")) {
+                log.warn("Invalid JWT token issuer: {}", issuer);
+                return false;
+            }
             return true;
         } catch (JwtException | IllegalArgumentException e) {
             log.warn("Invalid JWT token: {}", e.getMessage());
@@ -44,7 +47,6 @@ public class JwtTokenValidator {
     public Claims getClaims(String token) {
         return Jwts.parser()
                 .verifyWith(key)
-                .requireIssuer(jwtProperties.getIssuer())
                 .build()
                 .parseSignedClaims(token)
                 .getPayload();

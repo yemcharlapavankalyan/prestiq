@@ -6,10 +6,10 @@ import org.springframework.stereotype.Component;
 @Component
 public class JwtProperties {
 
-    @Value("${prestiq.security.jwt.secret:0123456789012345678901234567890123456789012345678901234567890123}")
+    @Value("${prestiq.security.jwt.secret:d8f99e8cfb24d648849df63ba900221a8b3c9d0e1f2a3b4c5d6e7f8a9b0c1d2}")
     private String secret;
 
-    @Value("${prestiq.security.jwt.issuer:prestiq-auth-service}")
+    @Value("${prestiq.security.jwt.issuer:prestiq-auth}")
     private String issuer;
 
     @Value("${prestiq.security.internal-service-key:prestiq-internal-dev-secret-key-2026}")
