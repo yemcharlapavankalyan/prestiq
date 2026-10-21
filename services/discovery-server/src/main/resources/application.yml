@@ -1,0 +1,31 @@
+server:
+  port: ${PORT:8761}
+
+spring:
+  application:
+    name: discovery-server
+
+eureka:
+  instance:
+    hostname: ${EUREKA_HOSTNAME:localhost}
+  client:
+    # Standalone mode: Do not register the discovery server with itself
+    register-with-eureka: false
+    # Do not attempt to fetch registry from another peer server in standalone development
+    fetch-registry: false
+    service-url:
+      defaultZone: http://${eureka.instance.hostname}:${server.port}/eureka/
+  server:
+    # Turn off self-preservation in single-instance development so deregistered instances expire promptly
+    enable-self-preservation: false
+    # Do not wait to sync empty registry on startup in standalone development
+    wait-time-in-ms-when-sync-empty: 0
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always

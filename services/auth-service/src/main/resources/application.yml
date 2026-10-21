@@ -1,0 +1,63 @@
+server:
+  port: ${AUTH_SERVICE_PORT:8081}
+
+spring:
+  application:
+    name: auth-service
+
+  datasource:
+    url: ${AUTH_DB_URL:jdbc:postgresql://localhost:5432/prestiq_auth_db}
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      idle-timeout: 30000
+      pool-name: PrestiqAuthHikariPool
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+
+prestiq:
+  security:
+    jwt:
+      # Must be a 256-bit+ secure secret. In production, this MUST be injected via JWT_SECRET env var.
+      secret: ${JWT_SECRET:d8f99e8cfb24d648849df63ba900221a8b3c9d0e1f2a3b4c5d6e7f8a9b0c1d2}
+      expiration-seconds: ${JWT_EXPIRATION_SECONDS:900} # 15 minutes
+      refresh-token-expiration-days: ${REFRESH_TOKEN_EXPIRATION_DAYS:7} # 7 days
+      issuer: prestiq-auth
+    cookie:
+      name: refreshToken
+      secure: ${COOKIE_SECURE:false}
+      same-site: ${COOKIE_SAMESITE:Lax}
+      path: /api
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operationsSorter: method

@@ -1,0 +1,59 @@
+server:
+  port: ${ELIGIBILITY_SERVICE_PORT:8084}
+
+spring:
+  application:
+    name: eligibility-service
+
+  datasource:
+    url: ${ELIGIBILITY_DB_URL:jdbc:postgresql://localhost:5432/prestiq_eligibility_db}
+    username: ${ELIGIBILITY_DB_USERNAME:prestiq_user}
+    password: ${ELIGIBILITY_DB_PASSWORD:prestiq_password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+prestiq:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:0123456789012345678901234567890123456789012345678901234567890123}
+      issuer: ${JWT_ISSUER:prestiq-auth-service}
+    internal-service-key: ${INTERNAL_SERVICE_KEY:prestiq-internal-dev-secret-key-2026}
+  services:
+    student-service:
+      url: ${STUDENT_SERVICE_URL:http://localhost:8082}
+    scholarship-service:
+      url: ${SCHOLARSHIP_SERVICE_URL:http://localhost:8083}

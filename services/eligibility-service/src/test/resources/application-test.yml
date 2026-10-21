@@ -1,0 +1,37 @@
+server:
+  port: 0
+
+spring:
+  application:
+    name: eligibility-service-test
+
+  datasource:
+    url: jdbc:h2:mem:prestiq_eligibility_test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+prestiq:
+  security:
+    jwt:
+      secret: 0123456789012345678901234567890123456789012345678901234567890123
+      issuer: prestiq-auth-test
+    internal-service-key: prestiq-internal-dev-secret-key-2026
+  services:
+    student-service:
+      url: http://localhost:8082
+    scholarship-service:
+      url: http://localhost:8083
