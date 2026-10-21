@@ -1,0 +1,64 @@
+server:
+  port: ${NOTIFICATION_SERVICE_PORT:8087}
+
+spring:
+  application:
+    name: notification-service
+
+  datasource:
+    url: ${NOTIFICATION_DB_URL:jdbc:postgresql://localhost:5432/prestiq_notification_db}
+    username: ${NOTIFICATION_DB_USERNAME:prestiq_user}
+    password: ${NOTIFICATION_DB_PASSWORD:prestiq_password}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      idle-timeout: 300000
+      connection-timeout: 20000
+      max-lifetime: 1200000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+prestiq:
+  security:
+    jwt:
+      secret: ${JWT_SECRET:0123456789012345678901234567890123456789012345678901234567890123}
+      issuer: ${JWT_ISSUER:prestiq-auth-service}
+    internal-service-key: ${INTERNAL_SERVICE_KEY:prestiq-internal-dev-secret-key-2026}
+  services:
+    application-service:
+      url: ${APPLICATION_SERVICE_URL:http://localhost:8086}
+      timeout-ms: 5000
+  notifications:
+    batch-size: 50
+    reminder-windows: 30,7,1
+    scheduler:
+      enabled: ${NOTIFICATION_SCHEDULER_ENABLED:true}
+      cron: ${NOTIFICATION_SCHEDULER_CRON:0 0 * * * *}
