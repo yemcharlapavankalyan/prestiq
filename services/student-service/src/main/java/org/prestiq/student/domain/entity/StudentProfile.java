@@ -1,14 +1,6 @@
 package org.prestiq.student.domain.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import org.prestiq.student.domain.converter.JsonMapConverter;
 
 import java.math.BigDecimal;
@@ -16,7 +8,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -24,10 +15,10 @@ import java.util.UUID;
 public class StudentProfile {
 
     @Id
-    @Column(name = "id", updatable = false, nullable = false)
+    @Column(name = "id", nullable = false, updatable = false)
     private UUID id;
 
-    @Column(name = "user_id", updatable = false, nullable = false, unique = true)
+    @Column(name = "user_id", nullable = false, unique = true, updatable = false)
     private UUID userId;
 
     @Column(name = "first_name", nullable = false, length = 100)
@@ -92,25 +83,28 @@ public class StudentProfile {
     public StudentProfile() {
     }
 
-    public StudentProfile(UUID id, UUID userId, String firstName, String lastName, EducationLevel educationLevel, String citizenshipCountry) {
-        this.id = id != null ? id : UUID.randomUUID();
+    public StudentProfile(UUID userId, String firstName, String lastName, String citizenshipCountry, EducationLevel educationLevel) {
+        this.id = UUID.randomUUID();
         this.userId = userId;
         this.firstName = firstName;
         this.lastName = lastName;
-        this.educationLevel = educationLevel;
         this.citizenshipCountry = citizenshipCountry;
+        this.educationLevel = educationLevel;
+        this.createdAt = Instant.now();
+        this.updatedAt = Instant.now();
     }
 
     @PrePersist
-    public void onPrePersist() {
+    protected void onCreate() {
         if (this.id == null) {
             this.id = UUID.randomUUID();
         }
-        Instant now = Instant.now();
         if (this.createdAt == null) {
-            this.createdAt = now;
+            this.createdAt = Instant.now();
         }
-        this.updatedAt = now;
+        if (this.updatedAt == null) {
+            this.updatedAt = Instant.now();
+        }
         if (this.gpaScale == null) {
             this.gpaScale = new BigDecimal("4.00");
         }
@@ -123,24 +117,9 @@ public class StudentProfile {
     }
 
     @PreUpdate
-    public void onPreUpdate() {
+    protected void onUpdate() {
         this.updatedAt = Instant.now();
     }
-
-    public String getFullName() {
-        if (firstName == null && lastName == null) {
-            return "";
-        }
-        if (firstName == null) {
-            return lastName;
-        }
-        if (lastName == null) {
-            return firstName;
-        }
-        return (firstName + " " + lastName).trim();
-    }
-
-    // Getters and Setters
 
     public UUID getId() {
         return id;
@@ -172,6 +151,12 @@ public class StudentProfile {
 
     public void setLastName(String lastName) {
         this.lastName = lastName;
+    }
+
+    public String getFullName() {
+        if (firstName == null) return lastName != null ? lastName : "";
+        if (lastName == null) return firstName;
+        return firstName + " " + lastName;
     }
 
     public LocalDate getDateOfBirth() {
@@ -291,7 +276,7 @@ public class StudentProfile {
     }
 
     public void setAdditionalAttributes(Map<String, Object> additionalAttributes) {
-        this.additionalAttributes = additionalAttributes != null ? additionalAttributes : new HashMap<>();
+        this.additionalAttributes = additionalAttributes;
     }
 
     public Instant getCreatedAt() {
@@ -309,17 +294,5 @@ public class StudentProfile {
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
     }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        StudentProfile that = (StudentProfile) o;
-        return Objects.equals(id, that.id);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(id);
-    }
 }
+

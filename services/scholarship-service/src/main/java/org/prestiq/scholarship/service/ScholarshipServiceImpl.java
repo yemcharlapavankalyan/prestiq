@@ -1,6 +1,5 @@
 package org.prestiq.scholarship.service;
 
-import jakarta.persistence.criteria.Predicate;
 import org.prestiq.scholarship.domain.entity.PublicationStatus;
 import org.prestiq.scholarship.domain.entity.Scholarship;
 import org.prestiq.scholarship.domain.entity.SourceType;
@@ -13,9 +12,6 @@ import org.prestiq.scholarship.dto.response.PagedResponse;
 import org.prestiq.scholarship.dto.response.ScholarshipResponse;
 import org.prestiq.scholarship.dto.response.ScholarshipSummaryResponse;
 import org.prestiq.scholarship.exception.DuplicateSlugException;
-import org.prestiq.scholarship.exception.IllegalLifecycleTransitionException;
-import org.prestiq.scholarship.exception.InvalidScholarshipDataException;
-import org.prestiq.scholarship.exception.InvalidSortException;
 import org.prestiq.scholarship.exception.ScholarshipNotFoundException;
 import org.prestiq.scholarship.repository.ScholarshipRepository;
 import org.prestiq.scholarship.security.UserPrincipal;
@@ -28,34 +24,17 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.Locale;
 
 @Service
 @Transactional
 public class ScholarshipServiceImpl implements ScholarshipService {
 
     private static final Logger log = LoggerFactory.getLogger(ScholarshipServiceImpl.class);
-
-    private static final Map<String, String> SORT_ALLOWLIST = Map.of(
-            "deadline", "applicationDeadline",
-            "applicationdeadline", "applicationDeadline",
-            "amount", "awardAmountMax",
-            "awardamount", "awardAmountMax",
-            "title", "title",
-            "createdat", "createdAt",
-            "created_at", "createdAt",
-            "provider", "providerName",
-            "providername", "providerName"
-    );
-
     private final ScholarshipRepository scholarshipRepository;
 
     public ScholarshipServiceImpl(ScholarshipRepository scholarshipRepository) {
@@ -76,89 +55,69 @@ public class ScholarshipServiceImpl implements ScholarshipService {
             int size,
             String sort
     ) {
-        Pageable pageable = createPageable(page, size, sort, "deadline", Sort.Direction.ASC);
+        Specification<Scholarship> spec = (root, cq, cb) -> {
+            var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
 
-        Specification<Scholarship> spec = (root, q, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
-
-            // Rule: Public listing ONLY exposes PUBLISHED and VERIFIED records
             predicates.add(cb.equal(root.get("publicationStatus"), PublicationStatus.PUBLISHED));
             predicates.add(cb.equal(root.get("verificationStatus"), VerificationStatus.VERIFIED));
 
-            // Deadline filtering: by default, exclude past deadlines
             if (!includeExpired) {
                 predicates.add(cb.greaterThanOrEqualTo(root.get("applicationDeadline"), LocalDate.now()));
             }
 
-            // Keyword query: searches title, provider name, and description
-            if (StringUtils.hasText(query)) {
-                String term = "%" + query.trim().toLowerCase() + "%";
-                Predicate titlePred = cb.like(cb.lower(root.get("title")), term);
-                Predicate providerPred = cb.like(cb.lower(root.get("providerName")), term);
-                Predicate descPred = cb.like(cb.lower(root.get("description")), term);
+            if (query != null && !query.isBlank()) {
+                String searchPattern = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
+                var titlePred = cb.like(cb.lower(root.get("title")), searchPattern);
+                var providerPred = cb.like(cb.lower(root.get("providerName")), searchPattern);
+                var descPred = cb.like(cb.lower(root.get("description")), searchPattern);
                 predicates.add(cb.or(titlePred, providerPred, descPred));
             }
 
-            // Education level filter
-            if (StringUtils.hasText(educationLevel)) {
-                String levelTerm = "%" + educationLevel.trim().toUpperCase() + "%";
-                predicates.add(cb.like(root.get("educationLevels"), levelTerm));
-            }
-
-            // Country restriction filter
-            if (StringUtils.hasText(country)) {
-                String countryTerm = "%" + country.trim().toUpperCase() + "%";
-                predicates.add(cb.like(root.get("eligibleCountries"), countryTerm));
-            }
-
-            // Award amount filters
-            if (minAmount != null) {
-                Predicate maxAmountGte = cb.greaterThanOrEqualTo(root.get("awardAmountMax"), minAmount);
-                Predicate minAmountGte = cb.and(
-                        cb.isNull(root.get("awardAmountMax")),
-                        cb.greaterThanOrEqualTo(root.get("awardAmountMin"), minAmount)
-                );
-                predicates.add(cb.or(maxAmountGte, minAmountGte));
-            }
-
-            if (maxAmount != null) {
-                predicates.add(cb.lessThanOrEqualTo(root.get("awardAmountMin"), maxAmount));
-            }
-
-            // Source type filter
             if (sourceType != null) {
                 predicates.add(cb.equal(root.get("sourceType"), sourceType));
             }
 
-            return cb.and(predicates.toArray(new Predicate[0]));
+            if (minAmount != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("awardAmountMin"), minAmount));
+            }
+
+            if (maxAmount != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("awardAmountMax"), maxAmount));
+            }
+
+            if (country != null && !country.isBlank()) {
+                predicates.add(cb.like(root.get("eligibleCountries"), "%\"" + country.trim() + "\"%"));
+            }
+
+            if (educationLevel != null && !educationLevel.isBlank() && !"ALL".equalsIgnoreCase(educationLevel)) {
+                predicates.add(cb.like(root.get("educationLevels"), "%\"" + educationLevel.trim() + "\"%"));
+            }
+
+            return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
         };
 
-        Page<ScholarshipSummaryResponse> resultPage = scholarshipRepository.findAll(spec, pageable)
-                .map(ScholarshipSummaryResponse::fromEntity);
-
-        return PagedResponse.fromPage(resultPage);
+        Pageable pageable = parseSort(sort, page, size);
+        Page<Scholarship> paged = scholarshipRepository.findAll(spec, pageable);
+        return PagedResponse.fromPage(paged.map(ScholarshipSummaryResponse::fromEntity));
     }
 
     @Override
     @Transactional(readOnly = true)
     public ScholarshipResponse getPublishedScholarshipByIdOrSlug(String idOrSlug) {
         Scholarship scholarship = null;
-
-        // Try numeric ID first
-        if (idOrSlug.matches("^\\d+$")) {
+        try {
             Long id = Long.parseLong(idOrSlug);
             scholarship = scholarshipRepository.findByIdAndVerificationStatusAndPublicationStatus(
                     id, VerificationStatus.VERIFIED, PublicationStatus.PUBLISHED
             ).orElse(null);
+        } catch (NumberFormatException ignored) {
+            // treat as slug
         }
 
-        // Try slug if not found by numeric ID
         if (scholarship == null) {
             scholarship = scholarshipRepository.findBySlugAndVerificationStatusAndPublicationStatus(
                     idOrSlug, VerificationStatus.VERIFIED, PublicationStatus.PUBLISHED
-            ).orElseThrow(() -> new ScholarshipNotFoundException(
-                    "Published scholarship not found with identifier: " + idOrSlug
-            ));
+            ).orElseThrow(() -> new ScholarshipNotFoundException("Published scholarship not found for identifier: " + idOrSlug));
         }
 
         return ScholarshipResponse.fromEntity(scholarship);
@@ -166,30 +125,30 @@ public class ScholarshipServiceImpl implements ScholarshipService {
 
     @Override
     public ScholarshipResponse createDraft(ScholarshipCreateRequest request, UserPrincipal principal) {
-        validateScholarshipData(
-                request.awardAmountMin(),
-                request.awardAmountMax(),
-                request.applicationStartDate(),
-                request.applicationDeadline(),
-                request.minGpa(),
-                request.gpaScale()
-        );
+        String slug = request.slug();
+        if (slug == null || slug.isBlank()) {
+            slug = request.title().toLowerCase(Locale.ROOT)
+                    .replaceAll("[^a-z0-9]+", "-")
+                    .replaceAll("^-|-$", "");
+        }
 
-        String slug = resolveSlug(request.slug(), request.title(), null);
+        if (scholarshipRepository.existsBySlug(slug)) {
+            throw new DuplicateSlugException("Scholarship slug already exists: " + slug);
+        }
 
         Scholarship s = new Scholarship();
-        s.setTitle(request.title().trim());
         s.setSlug(slug);
-        s.setProviderName(request.providerName().trim());
-        s.setDescription(request.description().trim());
-        s.setOfficialWebsiteUrl(request.officialWebsiteUrl().trim());
-        s.setApplicationUrl(StringUtils.hasText(request.applicationUrl()) ? request.applicationUrl().trim() : null);
+        s.setTitle(request.title());
+        s.setProviderName(request.providerName());
+        s.setDescription(request.description());
+        s.setOfficialWebsiteUrl(request.officialWebsiteUrl());
+        s.setApplicationUrl(request.applicationUrl());
         s.setSourceType(request.sourceType());
         s.setAwardAmountMin(request.awardAmountMin());
         s.setAwardAmountMax(request.awardAmountMax());
-        s.setCurrencyCode(StringUtils.hasText(request.currencyCode()) ? request.currencyCode().trim() : "USD");
+        s.setCurrencyCode(request.currencyCode() != null ? request.currencyCode() : "USD");
         s.setAwardStructure(request.awardStructure() != null ? request.awardStructure() : org.prestiq.scholarship.domain.entity.AwardStructure.ONE_TIME);
-        s.setRenewable(request.isRenewable() != null ? request.isRenewable() : false);
+        s.setRenewable(Boolean.TRUE.equals(request.isRenewable()));
         s.setApplicationStartDate(request.applicationStartDate());
         s.setApplicationDeadline(request.applicationDeadline());
         s.setAcademicYear(request.academicYear());
@@ -201,48 +160,33 @@ public class ScholarshipServiceImpl implements ScholarshipService {
         s.setMinGpa(request.minGpa());
         s.setGpaScale(request.gpaScale() != null ? request.gpaScale() : new BigDecimal("4.00"));
         s.setMaxFamilyIncome(request.maxFamilyIncome());
-        s.setFirstGenOnly(request.firstGenOnly() != null ? request.firstGenOnly() : false);
-        s.setVeteranOnly(request.veteranOnly() != null ? request.veteranOnly() : false);
-        s.setDisabilityOnly(request.disabilityOnly() != null ? request.disabilityOnly() : false);
+        s.setFirstGenOnly(Boolean.TRUE.equals(request.firstGenOnly()));
+        s.setVeteranOnly(Boolean.TRUE.equals(request.veteranOnly()));
+        s.setDisabilityOnly(Boolean.TRUE.equals(request.disabilityOnly()));
         s.setEligibilityCriteriaSchema(request.eligibilityCriteriaSchema());
         s.setSourceName(request.sourceName());
-
-        // Initial lifecycle state: strictly DRAFT
         s.setVerificationStatus(VerificationStatus.DRAFT);
         s.setPublicationStatus(PublicationStatus.DRAFT);
 
         Scholarship saved = scholarshipRepository.save(s);
-        log.info("Created draft scholarship ID {} (slug: {}) by user {}", saved.getId(), saved.getSlug(),
-                principal != null ? principal.getName() : "internal");
+        log.info("Created draft scholarship ID: {}, slug: {}", saved.getId(), saved.getSlug());
         return ScholarshipResponse.fromEntity(saved);
     }
 
     @Override
     public ScholarshipResponse updateScholarship(Long id, ScholarshipUpdateRequest request) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
 
-        LocalDate startDate = request.applicationStartDate() != null ? request.applicationStartDate() : s.getApplicationStartDate();
-        LocalDate deadline = request.applicationDeadline() != null ? request.applicationDeadline() : s.getApplicationDeadline();
-        BigDecimal minAmt = request.awardAmountMin() != null ? request.awardAmountMin() : s.getAwardAmountMin();
-        BigDecimal maxAmt = request.awardAmountMax() != null ? request.awardAmountMax() : s.getAwardAmountMax();
-        BigDecimal minGpa = request.minGpa() != null ? request.minGpa() : s.getMinGpa();
-        BigDecimal scale = request.gpaScale() != null ? request.gpaScale() : s.getGpaScale();
-
-        validateScholarshipData(minAmt, maxAmt, startDate, deadline, minGpa, scale);
-
-        if (StringUtils.hasText(request.title())) s.setTitle(request.title().trim());
-        if (StringUtils.hasText(request.slug()) && !request.slug().equals(s.getSlug())) {
-            s.setSlug(resolveSlug(request.slug(), s.getTitle(), id));
-        }
-        if (StringUtils.hasText(request.providerName())) s.setProviderName(request.providerName().trim());
-        if (StringUtils.hasText(request.description())) s.setDescription(request.description().trim());
-        if (StringUtils.hasText(request.officialWebsiteUrl())) s.setOfficialWebsiteUrl(request.officialWebsiteUrl().trim());
-        if (request.applicationUrl() != null) s.setApplicationUrl(request.applicationUrl().trim());
+        if (request.title() != null) s.setTitle(request.title());
+        if (request.providerName() != null) s.setProviderName(request.providerName());
+        if (request.description() != null) s.setDescription(request.description());
+        if (request.officialWebsiteUrl() != null) s.setOfficialWebsiteUrl(request.officialWebsiteUrl());
+        if (request.applicationUrl() != null) s.setApplicationUrl(request.applicationUrl());
         if (request.sourceType() != null) s.setSourceType(request.sourceType());
         if (request.awardAmountMin() != null) s.setAwardAmountMin(request.awardAmountMin());
         if (request.awardAmountMax() != null) s.setAwardAmountMax(request.awardAmountMax());
-        if (StringUtils.hasText(request.currencyCode())) s.setCurrencyCode(request.currencyCode().trim());
+        if (request.currencyCode() != null) s.setCurrencyCode(request.currencyCode());
         if (request.awardStructure() != null) s.setAwardStructure(request.awardStructure());
         if (request.isRenewable() != null) s.setRenewable(request.isRenewable());
         if (request.applicationStartDate() != null) s.setApplicationStartDate(request.applicationStartDate());
@@ -262,95 +206,71 @@ public class ScholarshipServiceImpl implements ScholarshipService {
         if (request.eligibilityCriteriaSchema() != null) s.setEligibilityCriteriaSchema(request.eligibilityCriteriaSchema());
         if (request.sourceName() != null) s.setSourceName(request.sourceName());
 
-        Scholarship updated = scholarshipRepository.save(s);
-        log.info("Updated scholarship ID {}", updated.getId());
-        return ScholarshipResponse.fromEntity(updated);
+        Scholarship saved = scholarshipRepository.save(s);
+        log.info("Updated scholarship ID: {}", saved.getId());
+        return ScholarshipResponse.fromEntity(saved);
     }
 
     @Override
     public ScholarshipResponse submitForReview(Long id) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
-
-        if (s.getVerificationStatus() == VerificationStatus.VERIFIED) {
-            throw new IllegalLifecycleTransitionException("Scholarship is already verified");
-        }
-
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
         s.setVerificationStatus(VerificationStatus.PENDING_REVIEW);
         Scholarship saved = scholarshipRepository.save(s);
-        log.info("Scholarship {} submitted for review", id);
         return ScholarshipResponse.fromEntity(saved);
     }
 
     @Override
     public ScholarshipResponse verifyScholarship(Long id, UserPrincipal principal) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
-
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
         s.setVerificationStatus(VerificationStatus.VERIFIED);
-        s.setVerifiedByUserId(principal != null ? principal.getId() : null);
-        Instant now = Instant.now();
-        s.setVerifiedAt(now);
-        s.setLastVerifiedAt(now);
-        s.setRejectionReason(null);
-
+        s.setPublicationStatus(PublicationStatus.PUBLISHED);
+        s.setVerifiedAt(Instant.now());
+        s.setPublishedAt(Instant.now());
+        if (principal != null) {
+            s.setVerifiedByUserId(principal.getId());
+        }
         Scholarship saved = scholarshipRepository.save(s);
-        log.info("Scholarship {} verified by user {}", id, principal != null ? principal.getName() : "system");
+        log.info("Verified and published scholarship ID: {}", saved.getId());
         return ScholarshipResponse.fromEntity(saved);
     }
 
     @Override
     public ScholarshipResponse rejectScholarship(Long id, ScholarshipRejectRequest request, UserPrincipal principal) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
-
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
         s.setVerificationStatus(VerificationStatus.REJECTED);
+        s.setPublicationStatus(PublicationStatus.DRAFT);
         s.setRejectionReason(request.rejectionReason());
-
-        // Unpublish if it was published
-        if (s.getPublicationStatus() == PublicationStatus.PUBLISHED) {
-            s.setPublicationStatus(PublicationStatus.DRAFT);
+        if (principal != null) {
+            s.setVerifiedByUserId(principal.getId());
         }
-
         Scholarship saved = scholarshipRepository.save(s);
-        log.info("Scholarship {} rejected. Reason: {}", id, request.rejectionReason());
+        log.info("Rejected scholarship ID: {} with reason: {}", saved.getId(), request.rejectionReason());
         return ScholarshipResponse.fromEntity(saved);
     }
 
     @Override
     public ScholarshipResponse publishScholarship(Long id, UserPrincipal principal) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
-
-        // Rule: A scholarship MUST be VERIFIED before it can be published!
-        if (s.getVerificationStatus() != VerificationStatus.VERIFIED) {
-            throw new IllegalLifecycleTransitionException(
-                    "Cannot publish scholarship: Status must be VERIFIED before publication (current status: "
-                            + s.getVerificationStatus() + ")"
-            );
-        }
-
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
         s.setPublicationStatus(PublicationStatus.PUBLISHED);
         s.setPublishedAt(Instant.now());
-        s.setArchivedAt(null);
-        s.setArchivedReason(null);
-
         Scholarship saved = scholarshipRepository.save(s);
-        log.info("Scholarship {} published by user {}", id, principal != null ? principal.getName() : "system");
         return ScholarshipResponse.fromEntity(saved);
     }
 
     @Override
     public ScholarshipResponse archiveScholarship(Long id, ScholarshipArchiveRequest request, UserPrincipal principal) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
-
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
         s.setPublicationStatus(PublicationStatus.ARCHIVED);
         s.setArchivedAt(Instant.now());
-        s.setArchivedReason(request != null ? request.archivedReason() : null);
-
+        if (request != null) {
+            s.setArchivedReason(request.archivedReason());
+        }
         Scholarship saved = scholarshipRepository.save(s);
-        log.info("Scholarship {} archived by user {}", id, principal != null ? principal.getName() : "system");
         return ScholarshipResponse.fromEntity(saved);
     }
 
@@ -358,7 +278,7 @@ public class ScholarshipServiceImpl implements ScholarshipService {
     @Transactional(readOnly = true)
     public ScholarshipResponse getScholarshipByIdAdmin(Long id) {
         Scholarship s = scholarshipRepository.findById(id)
-                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found with ID: " + id));
+                .orElseThrow(() -> new ScholarshipNotFoundException("Scholarship not found: " + id));
         return ScholarshipResponse.fromEntity(s);
     }
 
@@ -373,131 +293,53 @@ public class ScholarshipServiceImpl implements ScholarshipService {
             int size,
             String sort
     ) {
-        Pageable pageable = createPageable(page, size, sort, "createdat", Sort.Direction.DESC);
-
-        Specification<Scholarship> spec = (root, q, cb) -> {
-            List<Predicate> predicates = new ArrayList<>();
+        Specification<Scholarship> spec = (root, cq, cb) -> {
+            var predicates = new java.util.ArrayList<jakarta.persistence.criteria.Predicate>();
 
             if (verificationStatus != null) {
                 predicates.add(cb.equal(root.get("verificationStatus"), verificationStatus));
             }
+
             if (publicationStatus != null) {
                 predicates.add(cb.equal(root.get("publicationStatus"), publicationStatus));
             }
+
             if (sourceType != null) {
                 predicates.add(cb.equal(root.get("sourceType"), sourceType));
             }
-            if (StringUtils.hasText(query)) {
-                String term = "%" + query.trim().toLowerCase() + "%";
-                Predicate titlePred = cb.like(cb.lower(root.get("title")), term);
-                Predicate providerPred = cb.like(cb.lower(root.get("providerName")), term);
+
+            if (query != null && !query.isBlank()) {
+                String searchPattern = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
+                var titlePred = cb.like(cb.lower(root.get("title")), searchPattern);
+                var providerPred = cb.like(cb.lower(root.get("providerName")), searchPattern);
                 predicates.add(cb.or(titlePred, providerPred));
             }
 
-            return cb.and(predicates.toArray(new Predicate[0]));
+            return cb.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));
         };
 
-        Page<ScholarshipSummaryResponse> resultPage = scholarshipRepository.findAll(spec, pageable)
-                .map(ScholarshipSummaryResponse::fromEntity);
-
-        return PagedResponse.fromPage(resultPage);
+        Pageable pageable = parseSort(sort, page, size);
+        Page<Scholarship> paged = scholarshipRepository.findAll(spec, pageable);
+        return PagedResponse.fromPage(paged.map(ScholarshipSummaryResponse::fromEntity));
     }
 
-    private Pageable createPageable(int page, int size, String sortParam, String defaultSortProperty, Sort.Direction defaultDirection) {
-        int validatedPage = Math.max(page, 0);
-        int validatedSize = (size <= 0) ? 20 : Math.min(size, 100);
+    private Pageable parseSort(String sort, int page, int size) {
+        Sort s = Sort.by(Sort.Direction.ASC, "applicationDeadline");
+        if (sort != null && !sort.isBlank()) {
+            String[] parts = sort.split(",");
+            String field = parts[0].trim();
+            Sort.Direction dir = (parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim()))
+                    ? Sort.Direction.DESC : Sort.Direction.ASC;
 
-        String propertyKey = defaultSortProperty.toLowerCase();
-        Sort.Direction direction = defaultDirection;
-
-        if (StringUtils.hasText(sortParam)) {
-            String[] parts = sortParam.split(",");
-            String requestedField = parts[0].trim().toLowerCase();
-
-            if (!SORT_ALLOWLIST.containsKey(requestedField)) {
-                throw new InvalidSortException(
-                        "Sort field '" + parts[0].trim() + "' is not permitted. Allowed sort fields are: "
-                                + String.join(", ", "deadline", "amount", "title", "createdAt", "provider")
-                );
-            }
-
-            propertyKey = requestedField;
-            if (parts.length > 1 && "desc".equalsIgnoreCase(parts[1].trim())) {
-                direction = Sort.Direction.DESC;
-            } else if (parts.length > 1 && "asc".equalsIgnoreCase(parts[1].trim())) {
-                direction = Sort.Direction.ASC;
+            switch (field) {
+                case "amount", "awardAmountMax" -> s = Sort.by(dir, "awardAmountMax");
+                case "title" -> s = Sort.by(dir, "title");
+                case "createdAt" -> s = Sort.by(dir, "createdAt");
+                case "provider", "providerName" -> s = Sort.by(dir, "providerName");
+                default -> s = Sort.by(dir, "applicationDeadline");
             }
         }
-
-        String entityProperty = SORT_ALLOWLIST.get(propertyKey);
-        return PageRequest.of(validatedPage, validatedSize, Sort.by(direction, entityProperty));
-    }
-
-    private void validateScholarshipData(
-            BigDecimal awardAmountMin,
-            BigDecimal awardAmountMax,
-            LocalDate startDate,
-            LocalDate deadline,
-            BigDecimal minGpa,
-            BigDecimal gpaScale
-    ) {
-        if (startDate != null && deadline != null && startDate.isAfter(deadline)) {
-            throw new InvalidScholarshipDataException(
-                    "Application opening date (" + startDate + ") cannot be after deadline (" + deadline + ")"
-            );
-        }
-
-        if (awardAmountMin != null && awardAmountMax != null && awardAmountMin.compareTo(awardAmountMax) > 0) {
-            throw new InvalidScholarshipDataException(
-                    "Minimum award amount (" + awardAmountMin + ") cannot exceed maximum award amount (" + awardAmountMax + ")"
-            );
-        }
-
-        BigDecimal scale = (gpaScale != null) ? gpaScale : new BigDecimal("4.00");
-        if (scale.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new InvalidScholarshipDataException("GPA scale must be strictly greater than 0.00");
-        }
-
-        if (minGpa != null) {
-            if (minGpa.compareTo(BigDecimal.ZERO) < 0) {
-                throw new InvalidScholarshipDataException("Minimum GPA cannot be negative");
-            }
-            if (minGpa.compareTo(scale) > 0) {
-                throw new InvalidScholarshipDataException(
-                        "Minimum GPA (" + minGpa + ") cannot exceed GPA scale (" + scale + ")"
-                );
-            }
-        }
-    }
-
-    private String resolveSlug(String providedSlug, String title, Long currentId) {
-        String baseSlug;
-        if (StringUtils.hasText(providedSlug)) {
-            baseSlug = providedSlug.trim().toLowerCase();
-        } else {
-            baseSlug = title.toLowerCase()
-                    .replaceAll("[^a-z0-9]+", "-")
-                    .replaceAll("^-|-$", "");
-            if (baseSlug.isBlank()) {
-                baseSlug = "scholarship-" + UUID.randomUUID().toString().substring(0, 8);
-            }
-        }
-
-        boolean exists = scholarshipRepository.existsBySlug(baseSlug);
-        if (exists) {
-            if (currentId != null) {
-                Scholarship existing = scholarshipRepository.findBySlug(baseSlug).orElse(null);
-                if (existing != null && existing.getId().equals(currentId)) {
-                    return baseSlug;
-                }
-            }
-            if (StringUtils.hasText(providedSlug)) {
-                throw new DuplicateSlugException("A scholarship with slug '" + baseSlug + "' already exists");
-            } else {
-                baseSlug = baseSlug + "-" + UUID.randomUUID().toString().substring(0, 4);
-            }
-        }
-
-        return baseSlug;
+        return PageRequest.of(Math.max(0, page), Math.min(100, Math.max(1, size)), s);
     }
 }
+

@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.UUID;
 
 @Service
@@ -22,7 +23,6 @@ import java.util.UUID;
 public class StudentProfileServiceImpl implements StudentProfileService {
 
     private static final Logger log = LoggerFactory.getLogger(StudentProfileServiceImpl.class);
-
     private final StudentProfileRepository profileRepository;
 
     public StudentProfileServiceImpl(StudentProfileRepository profileRepository) {
@@ -33,38 +33,42 @@ public class StudentProfileServiceImpl implements StudentProfileService {
     @Transactional(readOnly = true)
     public StudentProfileResponse getProfileByUserId(UUID userId) {
         StudentProfile profile = profileRepository.findByUserId(userId)
-                .orElseThrow(() -> new ProfileNotFoundException("Student profile not found for user: " + userId));
+                .orElseThrow(() -> new ProfileNotFoundException("Student profile not found for user ID: " + userId));
         return StudentProfileResponse.fromEntity(profile);
     }
 
     @Override
     public StudentProfileResponse createProfile(UUID userId, StudentProfileRequest request) {
-        validateAcademicData(request);
-
         if (profileRepository.existsByUserId(userId)) {
-            throw new ProfileAlreadyExistsException("A student profile already exists for user: " + userId);
+            throw new ProfileAlreadyExistsException("Student profile already exists for user ID: " + userId);
         }
 
-        StudentProfile profile = new StudentProfile();
-        profile.setId(UUID.randomUUID());
-        profile.setUserId(userId);
+        validateAcademicData(request);
+
+        StudentProfile profile = new StudentProfile(
+                userId,
+                request.firstName(),
+                request.lastName(),
+                request.citizenshipCountry(),
+                request.educationLevel()
+        );
         mapRequestToEntity(request, profile);
 
         StudentProfile saved = profileRepository.save(profile);
-        log.info("Created new student profile {} for user {}", saved.getId(), userId);
+        log.info("Created student profile ID: {} for user ID: {}", saved.getId(), userId);
         return StudentProfileResponse.fromEntity(saved);
     }
 
     @Override
     public StudentProfileResponse updateProfile(UUID userId, StudentProfileRequest request) {
-        validateAcademicData(request);
-
         StudentProfile profile = profileRepository.findByUserId(userId)
-                .orElseThrow(() -> new ProfileNotFoundException("Student profile not found for user: " + userId));
+                .orElseThrow(() -> new ProfileNotFoundException("Student profile not found for user ID: " + userId));
 
+        validateAcademicData(request);
         mapRequestToEntity(request, profile);
+
         StudentProfile saved = profileRepository.save(profile);
-        log.info("Updated student profile {} for user {}", saved.getId(), userId);
+        log.info("Updated student profile ID: {} for user ID: {}", saved.getId(), userId);
         return StudentProfileResponse.fromEntity(saved);
     }
 
@@ -73,16 +77,17 @@ public class StudentProfileServiceImpl implements StudentProfileService {
         validateAcademicData(request);
 
         StudentProfile profile = profileRepository.findByUserId(userId)
-                .orElseGet(() -> {
-                    StudentProfile newProfile = new StudentProfile();
-                    newProfile.setId(UUID.randomUUID());
-                    newProfile.setUserId(userId);
-                    return newProfile;
-                });
+                .orElseGet(() -> new StudentProfile(
+                        userId,
+                        request.firstName(),
+                        request.lastName(),
+                        request.citizenshipCountry(),
+                        request.educationLevel()
+                ));
 
         mapRequestToEntity(request, profile);
         StudentProfile saved = profileRepository.save(profile);
-        log.info("Upserted student profile {} for user {}", saved.getId(), userId);
+        log.info("Upserted student profile ID: {} for user ID: {}", saved.getId(), userId);
         return StudentProfileResponse.fromEntity(saved);
     }
 
@@ -90,51 +95,39 @@ public class StudentProfileServiceImpl implements StudentProfileService {
     @Transactional(readOnly = true)
     public StudentProfileResponse getProfileById(UUID profileId, UserPrincipal principal) {
         StudentProfile profile = profileRepository.findById(profileId)
-                .orElseThrow(() -> new ProfileNotFoundException("Student profile not found with ID: " + profileId));
+                .orElseThrow(() -> new ProfileNotFoundException("Student profile not found for ID: " + profileId));
 
-        // Security check: Only the owning student or authorized administrative/internal roles can access this profile
-        boolean isAdmin = principal != null && (principal.hasRole("ADMIN") || principal.isInternal());
-        boolean isOwner = principal != null && profile.getUserId().equals(principal.getId());
-
-        if (!isAdmin && !isOwner) {
-            log.warn("Unauthorized access attempt: User {} attempted to access profile {} belonging to user {}",
-                    principal != null ? principal.getId() : "anonymous", profileId, profile.getUserId());
-            throw new AccessDeniedException("Access denied: You do not have permission to view another student's profile.");
+        if (principal != null && !principal.isInternal() && !principal.hasRole("ADMIN") && !profile.getUserId().equals(principal.getId())) {
+            throw new AccessDeniedException("Unauthorized to access student profile: " + profileId);
         }
 
         return StudentProfileResponse.fromEntity(profile);
     }
 
     private void validateAcademicData(StudentProfileRequest request) {
-        BigDecimal scale = request.gpaScale() != null ? request.gpaScale() : new BigDecimal("4.00");
-        if (scale.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new InvalidAcademicDataException("GPA scale must be strictly greater than 0.00");
-        }
-
-        if (request.cumulativeGpa() != null) {
-            if (request.cumulativeGpa().compareTo(BigDecimal.ZERO) < 0) {
-                throw new InvalidAcademicDataException("Cumulative GPA cannot be negative");
+        if (request.cumulativeGpa() != null && request.gpaScale() != null) {
+            if (request.cumulativeGpa().compareTo(request.gpaScale()) > 0) {
+                throw new InvalidAcademicDataException("Cumulative GPA (" + request.cumulativeGpa()
+                        + ") cannot exceed GPA scale (" + request.gpaScale() + ")");
             }
-            if (request.cumulativeGpa().compareTo(scale) > 0) {
-                throw new InvalidAcademicDataException(
-                        String.format("Cumulative GPA (%s) cannot exceed the grading scale (%s)",
-                                request.cumulativeGpa(), scale)
-                );
-            }
-        }
-
-        if (request.annualFamilyIncome() != null && request.annualFamilyIncome().compareTo(BigDecimal.ZERO) < 0) {
-            throw new InvalidAcademicDataException("Annual family income cannot be negative");
         }
     }
 
     private void mapRequestToEntity(StudentProfileRequest request, StudentProfile profile) {
         profile.setFirstName(request.firstName());
         profile.setLastName(request.lastName());
-        profile.setDateOfBirth(request.dateOfBirth());
-        profile.setCitizenshipCountry(request.citizenshipCountry());
-        profile.setStateProvince(request.stateProvince());
-        profile.setEducationLevel(request.educationLevel());
+        if (request.dateOfBirth() != null) {
+            profile.setDateOfBirth(request.dateOfBirth());
+        }
+        if (request.citizenshipCountry() != null) {
+            profile.setCitizenshipCountry(request.citizenshipCountry());
+        }
+        if (request.stateProvince() != null) {
+            profile.setStateProvince(request.stateProvince());
+        }
+        if (request.educationLevel() != null) {
+            profile.setEducationLevel(request.educationLevel());
+        }
         profile.setInstitutionName(request.institutionName());
         profile.setMajorFieldOfStudy(request.majorFieldOfStudy());
         profile.setCurrentYearOrSemester(request.currentYearOrSemester());
@@ -142,12 +135,18 @@ public class StudentProfileServiceImpl implements StudentProfileService {
 
         if (request.gpaScale() != null) {
             profile.setGpaScale(request.gpaScale());
+        } else if (profile.getGpaScale() == null) {
+            profile.setGpaScale(new BigDecimal("4.00"));
         }
+
         profile.setAnnualFamilyIncome(request.annualFamilyIncome());
 
         if (request.currencyCode() != null) {
             profile.setCurrencyCode(request.currencyCode());
+        } else if (profile.getCurrencyCode() == null) {
+            profile.setCurrencyCode("USD");
         }
+
         if (request.firstGenStudent() != null) {
             profile.setFirstGenStudent(request.firstGenStudent());
         }
@@ -158,7 +157,8 @@ public class StudentProfileServiceImpl implements StudentProfileService {
             profile.setDisabilityStatus(request.disabilityStatus());
         }
         if (request.additionalAttributes() != null) {
-            profile.setAdditionalAttributes(request.additionalAttributes());
+            profile.setAdditionalAttributes(new HashMap<>(request.additionalAttributes()));
         }
     }
 }
+

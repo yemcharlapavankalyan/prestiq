@@ -1,18 +1,6 @@
 package org.prestiq.scholarship.domain.entity;
 
-import jakarta.persistence.CascadeType;
-import jakarta.persistence.Column;
-import jakarta.persistence.Convert;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
+import jakarta.persistence.*;
 import org.prestiq.scholarship.domain.converter.JsonListConverter;
 import org.prestiq.scholarship.domain.converter.StringListConverter;
 
@@ -22,7 +10,6 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -148,7 +135,7 @@ public class Scholarship {
     @Column(name = "archived_reason", columnDefinition = "TEXT")
     private String archivedReason;
 
-    @Column(name = "source_name", length = 255)
+    @Column(name = "source_name")
     private String sourceName;
 
     @Column(name = "last_verified_at")
@@ -167,72 +154,29 @@ public class Scholarship {
     }
 
     @PrePersist
-    public void onPrePersist() {
-        Instant now = Instant.now();
-        if (this.createdAt == null) {
-            this.createdAt = now;
+    protected void onCreate() {
+        if (createdAt == null) {
+            createdAt = Instant.now();
         }
-        this.updatedAt = now;
-        if (this.currencyCode == null) {
-            this.currencyCode = "USD";
+        if (updatedAt == null) {
+            updatedAt = Instant.now();
         }
-        if (this.awardStructure == null) {
-            this.awardStructure = AwardStructure.ONE_TIME;
+        if (currencyCode == null) {
+            currencyCode = "USD";
         }
-        if (this.gpaScale == null) {
-            this.gpaScale = new BigDecimal("4.00");
-        }
-        if (this.verificationStatus == null) {
-            this.verificationStatus = VerificationStatus.DRAFT;
-        }
-        if (this.publicationStatus == null) {
-            this.publicationStatus = PublicationStatus.DRAFT;
-        }
-        if (this.eligibleCountries == null) {
-            this.eligibleCountries = new ArrayList<>();
-        }
-        if (this.eligibleStates == null) {
-            this.eligibleStates = new ArrayList<>();
-        }
-        if (this.educationLevels == null) {
-            this.educationLevels = new ArrayList<>();
-        }
-        if (this.eligibleInstitutions == null) {
-            this.eligibleInstitutions = new ArrayList<>();
-        }
-        if (this.eligibleFieldsOfStudy == null) {
-            this.eligibleFieldsOfStudy = new ArrayList<>();
-        }
-        if (this.eligibilityCriteriaSchema == null) {
-            this.eligibilityCriteriaSchema = new ArrayList<>();
+        if (gpaScale == null) {
+            gpaScale = new BigDecimal("4.00");
         }
     }
 
     @PreUpdate
-    public void onPreUpdate() {
-        this.updatedAt = Instant.now();
-    }
-
-    public boolean isPubliclyVisible() {
-        return this.verificationStatus == VerificationStatus.VERIFIED
-                && this.publicationStatus == PublicationStatus.PUBLISHED;
+    protected void onUpdate() {
+        updatedAt = Instant.now();
     }
 
     public boolean isExpired() {
-        return this.applicationDeadline != null && this.applicationDeadline.isBefore(LocalDate.now());
+        return applicationDeadline != null && applicationDeadline.isBefore(LocalDate.now());
     }
-
-    public void addSource(ScholarshipSource source) {
-        sources.add(source);
-        source.setScholarship(this);
-    }
-
-    public void removeSource(ScholarshipSource source) {
-        sources.remove(source);
-        source.setScholarship(null);
-    }
-
-    // Getters and Setters
 
     public Long getId() {
         return id;
@@ -543,7 +487,7 @@ public class Scholarship {
     }
 
     public void setSources(List<ScholarshipSource> sources) {
-        this.sources = sources;
+        this.sources = sources != null ? sources : new ArrayList<>();
     }
 
     public Instant getCreatedAt() {
@@ -561,17 +505,5 @@ public class Scholarship {
     public void setUpdatedAt(Instant updatedAt) {
         this.updatedAt = updatedAt;
     }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        Scholarship that = (Scholarship) o;
-        return Objects.equals(id, that.id);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(id);
-    }
 }
+

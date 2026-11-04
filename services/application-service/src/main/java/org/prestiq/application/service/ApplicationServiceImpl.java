@@ -1,6 +1,5 @@
 package org.prestiq.application.service;
 
-import org.prestiq.application.client.NotificationServiceClient;
 import org.prestiq.application.client.ScholarshipServiceClient;
 import org.prestiq.application.domain.entity.ApplicationStatus;
 import org.prestiq.application.domain.entity.ApplicationStatusHistory;
@@ -25,148 +24,117 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.StringUtils;
 
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
+@Transactional
 public class ApplicationServiceImpl implements ApplicationService {
 
     private static final Logger log = LoggerFactory.getLogger(ApplicationServiceImpl.class);
-    private static final List<ApplicationStatus> TERMINAL_STATUSES = List.of(
-            ApplicationStatus.WITHDRAWN,
-            ApplicationStatus.REJECTED
-    );
 
     private final ScholarshipApplicationRepository applicationRepository;
-    private final ApplicationStatusHistoryRepository statusHistoryRepository;
-    private final ScholarshipServiceClient scholarshipServiceClient;
-    private final NotificationServiceClient notificationServiceClient;
+    private final ApplicationStatusHistoryRepository historyRepository;
+    private final ScholarshipServiceClient scholarshipClient;
 
     public ApplicationServiceImpl(
             ScholarshipApplicationRepository applicationRepository,
-            ApplicationStatusHistoryRepository statusHistoryRepository,
-            ScholarshipServiceClient scholarshipServiceClient,
-            NotificationServiceClient notificationServiceClient
+            ApplicationStatusHistoryRepository historyRepository,
+            ScholarshipServiceClient scholarshipClient
     ) {
         this.applicationRepository = applicationRepository;
-        this.statusHistoryRepository = statusHistoryRepository;
-        this.scholarshipServiceClient = scholarshipServiceClient;
-        this.notificationServiceClient = notificationServiceClient;
+        this.historyRepository = historyRepository;
+        this.scholarshipClient = scholarshipClient;
     }
 
     @Override
-    @Transactional
     public ApplicationResponse createApplication(UUID studentId, CreateApplicationRequest request) {
-        // 1. Enforce Sensible Duplicate Rules:
-        // A student cannot have multiple concurrent active applications for the same scholarship.
-        // If an earlier application was WITHDRAWN or REJECTED, they can initiate a new application.
-        if (applicationRepository.existsByStudentIdAndScholarshipIdAndCurrentStatusNotIn(
-                studentId, request.scholarshipId(), TERMINAL_STATUSES)) {
-            throw new DuplicateApplicationException(
-                    "An active application already exists for scholarship ID: " + request.scholarshipId() +
-                    ". You cannot create a duplicate application while an active application is in progress."
-            );
+        Set<ApplicationStatus> terminalStatuses = Set.of(ApplicationStatus.WITHDRAWN);
+        boolean exists = applicationRepository.existsByStudentIdAndScholarshipIdAndCurrentStatusNotIn(
+                studentId, request.scholarshipId(), terminalStatuses
+        );
+        if (exists) {
+            throw new DuplicateApplicationException("Active application already exists for scholarship ID: " + request.scholarshipId());
         }
 
-        // 2. Fetch Verified Scholarship Snapshot from Scholarship Service
         String title = request.scholarshipTitle();
         String provider = request.scholarshipProvider();
         LocalDate deadline = request.submissionDeadline();
 
-        Optional<ScholarshipClientDto> scholOpt = scholarshipServiceClient.fetchScholarshipById(request.scholarshipId());
-        if (scholOpt.isPresent()) {
-            ScholarshipClientDto dto = scholOpt.get();
-            if (!StringUtils.hasText(title)) title = dto.title();
-            if (!StringUtils.hasText(provider)) provider = dto.providerName();
-            if (deadline == null) deadline = dto.applicationDeadline();
+        Optional<ScholarshipClientDto> clientDto = scholarshipClient.fetchScholarshipById(request.scholarshipId());
+        if (clientDto.isPresent()) {
+            ScholarshipClientDto dto = clientDto.get();
+            if (dto.title() != null) title = dto.title();
+            if (dto.providerName() != null) provider = dto.providerName();
+            if (dto.applicationDeadline() != null) deadline = dto.applicationDeadline();
         }
 
-        if (!StringUtils.hasText(title)) {
+        if (title == null || title.isBlank()) {
             title = "Scholarship #" + request.scholarshipId();
         }
         if (deadline == null) {
             deadline = LocalDate.now().plusMonths(1);
         }
 
-        // 3. Persist Application
-        ScholarshipApplication application = new ScholarshipApplication(
-                UUID.randomUUID(),
-                studentId,
-                request.scholarshipId(),
-                title,
-                provider,
-                ApplicationStatus.PLANNING,
-                request.externalPortalReference(),
-                deadline,
-                null,
-                null,
-                null,
-                0,
-                request.notes(),
-                Instant.now(),
-                Instant.now()
-        );
+        ScholarshipApplication app = new ScholarshipApplication();
+        app.setId(UUID.randomUUID());
+        app.setStudentId(studentId);
+        app.setScholarshipId(request.scholarshipId());
+        app.setScholarshipTitle(title);
+        app.setScholarshipProvider(provider);
+        app.setCurrentStatus(ApplicationStatus.PLANNING);
+        app.setSubmissionDeadline(deadline);
+        app.setExternalPortalReference(request.externalPortalReference());
+        app.setNotes(request.notes());
+        app.setProgressPercentage(0);
+        app.setCreatedAt(Instant.now());
+        app.setUpdatedAt(Instant.now());
 
-        ScholarshipApplication saved = applicationRepository.save(application);
-        log.info("Created new scholarship application {} for student {} on scholarship {}",
-                saved.getId(), studentId, request.scholarshipId());
+        ScholarshipApplication saved = applicationRepository.save(app);
 
-        // 4. Record Initial Status Transition History
+        // Record history
         ApplicationStatusHistory history = new ApplicationStatusHistory(
-                saved.getId(),
-                null,
-                ApplicationStatus.PLANNING,
-                studentId,
-                "Application started in PLANNING stage"
+                saved.getId(), null, ApplicationStatus.PLANNING, studentId, "Initial application created"
         );
-        statusHistoryRepository.save(history);
+        historyRepository.save(history);
 
-        // 5. Schedule Deadline Reminder with Notification Service
-        try {
-            notificationServiceClient.scheduleDeadlineReminder(saved.getId(), studentId, deadline);
-        } catch (Exception e) {
-            log.warn("Could not dispatch deadline reminder for application {}: {}", saved.getId(), e.getMessage());
-        }
-
+        log.info("Created application {} for student {} scholarship {}", saved.getId(), studentId, request.scholarshipId());
         return ApplicationResponse.fromEntity(saved);
     }
 
     @Override
     @Transactional(readOnly = true)
-    public PagedResponse<ApplicationResponse> getApplications(
-            UUID studentId,
-            ApplicationStatus status,
-            Pageable pageable
-    ) {
-        Page<ScholarshipApplication> page = (status != null)
-                ? applicationRepository.findByStudentIdAndCurrentStatus(studentId, status, pageable)
-                : applicationRepository.findByStudentId(studentId, pageable);
-
+    public PagedResponse<ApplicationResponse> getApplications(UUID studentId, ApplicationStatus status, Pageable pageable) {
+        Page<ScholarshipApplication> page;
+        if (status != null) {
+            page = applicationRepository.findByStudentIdAndCurrentStatus(studentId, status, pageable);
+        } else {
+            page = applicationRepository.findByStudentId(studentId, pageable);
+        }
         return PagedResponse.fromPage(page.map(ApplicationResponse::fromEntity));
     }
 
     @Override
     @Transactional(readOnly = true)
     public ApplicationResponse getApplicationById(UUID id, UserPrincipal principal) {
-        ScholarshipApplication app = findApplicationOrThrow(id);
-        verifyAccess(app, principal);
+        ScholarshipApplication app = applicationRepository.findById(id)
+                .orElseThrow(() -> new ApplicationNotFoundException("Application not found: " + id));
+
+        checkAccess(app, principal);
         return ApplicationResponse.fromEntity(app);
     }
 
     @Override
-    @Transactional
-    public ApplicationResponse updateApplication(
-            UUID id,
-            UserPrincipal principal,
-            UpdateApplicationRequest request
-    ) {
-        ScholarshipApplication app = findApplicationOrThrow(id);
-        verifyAccess(app, principal);
+    public ApplicationResponse updateApplication(UUID id, UserPrincipal principal, UpdateApplicationRequest request) {
+        ScholarshipApplication app = applicationRepository.findById(id)
+                .orElseThrow(() -> new ApplicationNotFoundException("Application not found: " + id));
+
+        checkAccess(app, principal);
 
         if (request.progressPercentage() != null) {
             app.setProgressPercentage(request.progressPercentage());
@@ -179,89 +147,71 @@ public class ApplicationServiceImpl implements ApplicationService {
         }
         if (request.submissionDeadline() != null) {
             app.setSubmissionDeadline(request.submissionDeadline());
-            // Reschedule notification on deadline adjustment
-            notificationServiceClient.scheduleDeadlineReminder(app.getId(), app.getStudentId(), request.submissionDeadline());
         }
-
         app.setUpdatedAt(Instant.now());
+
         ScholarshipApplication saved = applicationRepository.save(app);
-        log.info("Updated progress/notes for application {}", id);
         return ApplicationResponse.fromEntity(saved);
     }
 
     @Override
-    @Transactional
-    public ApplicationResponse updateApplicationStatus(
-            UUID id,
-            UserPrincipal principal,
-            UpdateStatusRequest request
-    ) {
-        ScholarshipApplication app = findApplicationOrThrow(id);
-        verifyAccess(app, principal);
+    public ApplicationResponse updateApplicationStatus(UUID id, UserPrincipal principal, UpdateStatusRequest request) {
+        ScholarshipApplication app = applicationRepository.findById(id)
+                .orElseThrow(() -> new ApplicationNotFoundException("Application not found: " + id));
 
-        ApplicationStatus fromStatus = app.getCurrentStatus();
-        ApplicationStatus toStatus = request.status();
+        checkAccess(app, principal);
 
-        // Validate allowed state transition
-        if (!fromStatus.canTransitionTo(toStatus)) {
-            throw new InvalidStatusTransitionException(fromStatus, toStatus);
+        ApplicationStatus current = app.getCurrentStatus();
+        ApplicationStatus target = request.status();
+
+        if (!current.canTransitionTo(target)) {
+            throw new InvalidStatusTransitionException(current, target);
         }
 
-        app.setCurrentStatus(toStatus);
-        app.setUpdatedAt(Instant.now());
-
-        // Specialized fields for submission and award
-        if (toStatus == ApplicationStatus.SUBMITTED) {
+        app.setCurrentStatus(target);
+        if (target == ApplicationStatus.SUBMITTED) {
+            app.setActualSubmissionDate(request.actualSubmissionDate() != null ? request.actualSubmissionDate() : LocalDate.now());
             app.setSubmittedAt(Instant.now());
-            app.setActualSubmissionDate(
-                    request.actualSubmissionDate() != null ? request.actualSubmissionDate() : LocalDate.now()
-            );
             app.setProgressPercentage(100);
         }
-
-        if (toStatus == ApplicationStatus.AWARDED && request.awardAmountReceived() != null) {
+        if (target == ApplicationStatus.AWARDED && request.awardAmountReceived() != null) {
             app.setAwardAmountReceived(request.awardAmountReceived());
         }
+        if (request.notes() != null) {
+            app.setNotes(request.notes());
+        }
+        app.setUpdatedAt(Instant.now());
 
         ScholarshipApplication saved = applicationRepository.save(app);
 
-        // Record audit transition history
         ApplicationStatusHistory history = new ApplicationStatusHistory(
-                app.getId(),
-                fromStatus,
-                toStatus,
-                principal.getId(),
-                request.notes()
+                saved.getId(), current, target, principal.getId(), request.notes()
         );
-        statusHistoryRepository.save(history);
+        historyRepository.save(history);
 
-        log.info("Transitioned application {} status from {} to {}", id, fromStatus, toStatus);
+        log.info("Transitioned application {} from {} to {}", id, current, target);
         return ApplicationResponse.fromEntity(saved);
     }
 
     @Override
-    @Transactional
-    public ApplicationResponse withdrawApplication(
-            UUID id,
-            UserPrincipal principal,
-            String notes
-    ) {
-        UpdateStatusRequest req = new UpdateStatusRequest(
+    public ApplicationResponse withdrawApplication(UUID id, UserPrincipal principal, String notes) {
+        return updateApplicationStatus(id, principal, new UpdateStatusRequest(
                 ApplicationStatus.WITHDRAWN,
-                notes != null ? notes : "Application voluntarily withdrawn by student",
+                notes != null ? notes : "Application withdrawn by applicant",
                 null,
                 null
-        );
-        return updateApplicationStatus(id, principal, req);
+        ));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<StatusHistoryResponse> getStatusHistory(UUID id, UserPrincipal principal) {
-        ScholarshipApplication app = findApplicationOrThrow(id);
-        verifyAccess(app, principal);
+        ScholarshipApplication app = applicationRepository.findById(id)
+                .orElseThrow(() -> new ApplicationNotFoundException("Application not found: " + id));
+        checkAccess(app, principal);
 
-        return statusHistoryRepository.findByApplicationIdOrderByChangedAtAsc(id).stream()
+        return historyRepository.findByApplicationIdOrderByChangedAtAsc(id)
+                .stream()
                 .map(StatusHistoryResponse::fromEntity)
                 .toList();
     }
@@ -270,30 +220,22 @@ public class ApplicationServiceImpl implements ApplicationService {
     @Transactional(readOnly = true)
     public List<ApplicationResponse> getUpcomingDeadlines(UUID studentId, int daysAhead) {
         LocalDate today = LocalDate.now();
-        List<ScholarshipApplication> list;
-        if (daysAhead > 0) {
-            LocalDate maxDate = today.plusDays(daysAhead);
-            list = applicationRepository.findUpcomingActiveDeadlines(studentId, today, maxDate);
-        } else {
-            list = applicationRepository.findAllUpcomingActiveDeadlines(studentId, today);
-        }
-
-        return list.stream()
+        LocalDate endDate = today.plusDays(daysAhead);
+        return applicationRepository.findUpcomingActiveDeadlines(studentId, today, endDate)
+                .stream()
                 .map(ApplicationResponse::fromEntity)
                 .toList();
     }
 
-    private ScholarshipApplication findApplicationOrThrow(UUID id) {
-        return applicationRepository.findById(id)
-                .orElseThrow(() -> new ApplicationNotFoundException("Scholarship application not found with ID: " + id));
-    }
-
-    private void verifyAccess(ScholarshipApplication app, UserPrincipal principal) {
+    private void checkAccess(ScholarshipApplication app, UserPrincipal principal) {
         if (principal == null) {
-            throw new AccessDeniedException("Authentication required to access this application");
+            throw new AccessDeniedException("Authentication required");
         }
-        if (!app.getStudentId().equals(principal.getId()) && !principal.hasRole("ADMIN") && !principal.isInternal()) {
-            throw new AccessDeniedException("Access denied: You do not have permission to access another student's application");
+        if (principal.isInternal() || principal.hasRole("ROLE_ADMIN") || principal.hasRole("ROLE_SCHOLARSHIP_OFFICER")) {
+            return;
+        }
+        if (!app.getStudentId().equals(principal.getId())) {
+            throw new AccessDeniedException("Unauthorized to access application: " + app.getId());
         }
     }
 }
